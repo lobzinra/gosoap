@@ -22,15 +22,19 @@ type HeaderParams map[string]interface{}
 type Params map[string]interface{}
 
 // SoapClient return new *Client to handle the requests with the WSDL
-func SoapClient(wsdl string) (*Client, error) {
+func SoapClient(wsdl string, httpClient *http.Client) (*Client, error) {
 	_, err := url.Parse(wsdl)
 	if err != nil {
 		return nil, err
 	}
 
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
 	c := &Client{
-		wsdl:       wsdl,
-		HttpClient: &http.Client{},
+		wsdl:       newWsdl(wsdl, httpClient),
+		HttpClient: httpClient,
 	}
 
 	return c, nil
@@ -53,7 +57,14 @@ type Client struct {
 	definitionsErr       error
 	onRequest            sync.WaitGroup
 	onDefinitionsRefresh sync.WaitGroup
-	wsdl                 string
+	wsdl                 *wsdl
+}
+
+// SetHTTPClient set new client for networking
+func (c *Client) SetHTTPClient(httpClient *http.Client) {
+	if httpClient != nil {
+		c.HttpClient = httpClient
+	}
 }
 
 // Call call's the method m with Params p
@@ -61,7 +72,7 @@ func (c *Client) Call(m string, p Params) (res *Response, err error) {
 	return c.Do(NewRequest(m, p))
 }
 
-// Call call's by struct
+// CallByStruct call's by struct
 func (c *Client) CallByStruct(s RequestStruct) (res *Response, err error) {
 	req, err := NewRequestByStruct(s)
 	if err != nil {
@@ -82,21 +93,10 @@ func (c *Client) waitAndRefreshDefinitions(d time.Duration) {
 }
 
 func (c *Client) initWsdl() {
-	c.Definitions, c.definitionsErr = getWsdlDefinitions(c.wsdl)
+	c.Definitions, c.definitionsErr = c.wsdl.getDefinitions()
 	if c.definitionsErr == nil {
 		c.URL = strings.TrimSuffix(c.Definitions.TargetNamespace, "/")
 	}
-}
-
-func (c *Client) SetWSDL(wsdl string) {
-	c.onRequest.Wait()
-	c.onDefinitionsRefresh.Wait()
-	c.onRequest.Add(1)
-	c.onDefinitionsRefresh.Add(1)
-	defer c.onRequest.Done()
-	defer c.onDefinitionsRefresh.Done()
-	c.wsdl = wsdl
-	c.initWsdl()
 }
 
 // Process Soap Request
